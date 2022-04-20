@@ -10,7 +10,7 @@ const MessagesProvider = ({ children }: Props) => {
   const addMessage = (message: string) => {
     setMessages(prev => {
       const msg = [...prev]
-      msg.push(message)
+      msg.unshift(message)
       return msg
     })
   }

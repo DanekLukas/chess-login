@@ -32,7 +32,6 @@ const Board = () => {
   const { clearTable, getAllFigures, placeFigure, moveFigure } = useContext(DbContext)
   const [figures, setFigures] = useState<TFigure[]>([])
   const [move, setMove] = useState<TFigure>()
-  const [moveOneFig, setMoveOneFig] = useState<string | undefined>()
   const [available, setAvailable] = useState<position[]>([])
   const [playing, setPlaying] = useState(color.white)
   const [smallCastle, setSmallCastle] = useState({ white: -1, black: -1 })
@@ -104,14 +103,14 @@ const Board = () => {
         })
       })
 
-      if (!fromNet) setMoveOneFig(JSON.stringify(pro))
+      if (!fromNet && pro.length > 0) shareSendMove(JSON.stringify(JSON.stringify(pro)))
 
       pro.forEach(async item => {
         if (item.figure.figure === figure.Tower) {
           if (item.position.horizontal === 'A') setSmallCastleByPlayer(0)
           else setBigCastleByPlayer(0)
         } else if (item.figure.figure === figure.King) setKingMovedByPlayer(true)
-        const index = figures.findIndex(
+        const index = (await getAllFigures()).findIndex(
           figure => JSON.stringify(item.figure) === JSON.stringify(figure)
         )
         if (index < 0) return false
@@ -119,17 +118,16 @@ const Board = () => {
           horizontal: item.position.horizontal,
           vertical: item.position.vertical,
         })
-        const tmp = [...figures]
-        tmp[index].horizontal = item.position.horizontal
-        tmp[index].vertical = item.position.vertical
-        setFigures(tmp)
+        const figs = await getAllFigures()
+        figs[index].horizontal = item.position.horizontal
+        figs[index].vertical = item.position.vertical
+        setFigures([...figs])
       })
       if (pro.length > 0) setPlaying(opositeChcolor(pro[pro.length - 1].figure.color))
       if (clearMove) setMove(undefined)
       return true
     },
     [
-      figures,
       filterFigure,
       move,
       moveFigure,
@@ -137,11 +135,13 @@ const Board = () => {
       setBigCastleByPlayer,
       setKingMovedByPlayer,
       setSmallCastleByPlayer,
+      getAllFigures,
+      shareSendMove,
     ]
   )
 
   useEffect(() => {
-    if (channelInstance && channelInstance.current)
+    if (channelInstance && channelInstance.current && channelInstance.current.onmessage === null)
       channelInstance.current.onmessage = event => {
         const decMessage = fromBase64(event.data)
         try {
@@ -162,14 +162,6 @@ const Board = () => {
         }
       }
   }, [addMessage, channelInstance, moveFig])
-
-  useEffect(() => {
-    const sendMove = (message: string) => {
-      shareSendMove(message)
-    }
-    if (!moveOneFig) return
-    sendMove(JSON.stringify(moveOneFig))
-  }, [moveOneFig, shareSendMove])
 
   const getReady = () => {
     const colors = [chcolor, opositeChcolor(chcolor)]
@@ -214,17 +206,17 @@ const Board = () => {
   }
 
   const getFigures = useCallback(async () => {
-    const figures = await getAllFigures()
-    if (figures.length === 0) {
+    const loadedFigures = await getAllFigures()
+    if (loadedFigures.length === 0) {
       return false
     }
-    setFigures(figures)
+    setFigures(loadedFigures)
     return true
   }, [getAllFigures])
 
   useEffect(() => {
-    getFigures()
-  }, [getFigures])
+    if (figures.length === 0) getFigures()
+  }, [getFigures, figures.length])
 
   const getClass = (pfigure: TFigure | undefined) => {
     if (!pfigure) return ''
@@ -581,7 +573,7 @@ const Board = () => {
           await getFigures()
         }}
       >
-        novou hru
+        nová hra
       </button>
       <button
         onClick={async () => {
@@ -591,7 +583,7 @@ const Board = () => {
           }
         }}
       >
-        připrav figurky
+        připravit figurky
       </button>
       <select
         onChange={e => {

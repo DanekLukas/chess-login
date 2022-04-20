@@ -86,7 +86,7 @@ const Connect = ({ moveFig, moveOneFig, changeChcolor }: Props) => {
 
             return prd
           })
-          moveFig(tmp, true)
+          moveFig(tmp)
         } catch (Error) {
           addMessage(decMessage)
         }
@@ -121,7 +121,7 @@ const Connect = ({ moveFig, moveOneFig, changeChcolor }: Props) => {
             }
             return prd
           })
-          moveFig(tmp, true)
+          moveFig(tmp)
         } catch (Error) {
           addMessage(decMessage)
         }

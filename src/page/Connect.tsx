@@ -9,7 +9,7 @@ const Connect = () => {
     <>
       <Board />
       <div>
-        {messages.reverse().map((message, index) => (
+        {messages.map((message, index) => (
           <p key={index}>{message}</p>
         ))}
       </div>

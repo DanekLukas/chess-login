@@ -22,7 +22,7 @@ const Homepage = () => {
             if (nameRef.current?.value) myRef.current = chooseNickName(nameRef.current?.value)
           }}
         >
-          <label>Nick name: </label>
+          <label>Jméno: </label>
           <input type={nameRef.current?.value && 'text'} name='name' ref={nameRef} />
           <input type='submit' value='použít' />
         </form>
