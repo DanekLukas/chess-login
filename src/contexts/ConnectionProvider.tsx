@@ -1,7 +1,8 @@
 import { ConnectionContext } from './ConnectionContext'
+import { MessagesContext } from './MessagesContext'
 import { NavigateFunction } from 'react-router-dom'
 import { fromBase64, toBase64 } from 'js-base64'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 type Props = {
   children: React.ReactNode
@@ -16,6 +17,9 @@ const ConnectionProvider = ({ children }: Props) => {
   const sendTo = useRef<string>('')
   const [peers, setPeers] = useState<string[]>([])
   const refNavigate = useRef<NavigateFunction>()
+  const candidate = useRef<string>()
+
+  const { addMessage } = useContext(MessagesContext)
 
   const chooseNickName = (name: string) => {
     if (peers && peers.includes(name)) return undefined
@@ -54,14 +58,12 @@ const ConnectionProvider = ({ children }: Props) => {
     }
   }, [])
 
-  // if (peerConnection.current?.oniceconnectionstatechange === null)
-  //   peerConnection.current.oniceconnectionstatechange = ev => {
-  //     console.info('iceConnectionState: ', peerConnection.current?.iceConnectionState)
-  //   }
-
   const sendDataToWithTimeout = useCallback(() => {
     if (peerConnection.current?.connectionState !== 'connected') {
       setTimeout(() => {
+        if (candidate.current) {
+          socket?.send(candidate.current)
+        }
         const rm = JSON.stringify(peerConnection.current?.localDescription?.toJSON())
         socket?.send(
           JSON.stringify({
@@ -70,6 +72,7 @@ const ConnectionProvider = ({ children }: Props) => {
             recievedRemoteDescr: toBase64(rm),
           })
         )
+
         // socket?.send(JSON.stringify({ connected: nameRef.current }))
       }, 100)
     }
@@ -90,33 +93,39 @@ const ConnectionProvider = ({ children }: Props) => {
     }
   }, [socket])
 
-  const createAnswer = useCallback(async (remoteDescription: string) => {
-    try {
-      const data = JSON.parse(remoteDescription)
-      if (peerConnection.current?.remoteDescription && data.type === 'answer') return
-      if (
-        peerConnection.current?.signalingState !== 'stable' ||
-        peerConnection.current?.remoteDescription === null
-      ) {
-        await peerConnection.current?.setRemoteDescription(new RTCSessionDescription(data))
-      }
-      if (
-        !peerConnection.current ||
-        peerConnection.current.connectionState !== 'new' ||
-        !['have-remote-offer', 'have-local-pranswer'].includes(
-          peerConnection.current?.signalingState
+  const createAnswer = useCallback(
+    async (remoteDescription: string) => {
+      try {
+        const data = JSON.parse(remoteDescription)
+        if (peerConnection.current?.remoteDescription && data.type === 'answer') return
+        if (
+          peerConnection.current?.signalingState !== 'stable' ||
+          peerConnection.current?.remoteDescription === null
+        ) {
+          await peerConnection.current?.setRemoteDescription(new RTCSessionDescription(data))
+        }
+        if (
+          !peerConnection.current ||
+          peerConnection.current.connectionState !== 'new' ||
+          !['have-remote-offer', 'have-local-pranswer'].includes(
+            peerConnection.current?.signalingState
+          )
         )
-      )
-        return
-      if (peerConnection.current.localDescription !== null) return
-      const description = await peerConnection.current.createAnswer()
-      await peerConnection.current!.setLocalDescription(
-        description as RTCLocalSessionDescriptionInit
-      )
-    } catch (Error) {
-      console.info('create answer error')
-    }
-  }, [])
+          return
+        if (peerConnection.current.localDescription !== null) return
+        const description = await peerConnection.current.createAnswer()
+        await peerConnection.current!.setLocalDescription(
+          description as RTCLocalSessionDescriptionInit
+        )
+        if (candidate.current) {
+          socket?.send(candidate.current)
+        }
+      } catch (Error) {
+        console.info('create answer error')
+      }
+    },
+    [socket]
+  )
 
   const connect = useCallback(() => {
     if (peerConnection.current?.ondatachannel === null) setupChannelAsASlave()
@@ -145,6 +154,28 @@ const ConnectionProvider = ({ children }: Props) => {
           else setPeers(added)
         } else {
           const value: Record<string, string> = JSON.parse(event.data)
+          if (
+            candidate.current &&
+            socket &&
+            peerConnection.current?.connectionState !== 'connected'
+          ) {
+            socket?.send(candidate.current)
+          }
+          try {
+            if (Object.keys(value).includes('candidate')) {
+              const parsed = fromBase64(value['candidate'])
+              const candidateInitDict: RTCIceCandidateInit = {
+                candidate: parsed,
+                sdpMLineIndex: 0,
+                // sdpMid: '',
+                // usernameFragment: '',
+              }
+              const candidate = new RTCIceCandidate(candidateInitDict)
+              peerConnection.current?.addIceCandidate(candidate)
+            }
+          } catch (e: any) {
+            addMessage(JSON.stringify(e.message))
+          }
           if (Object.keys(value).includes('recievedRemoteDescr')) {
             const prd = value['recievedRemoteDescr']
             if (Object.keys(value).includes('offeredBy')) {
@@ -160,10 +191,9 @@ const ConnectionProvider = ({ children }: Props) => {
         }
       }
     }
-  }, [createAnswer, connect, socket, peers])
+  }, [createAnswer, connect, socket, peers, addMessage])
 
   const stateChange = () => {
-    // console.info('connection state chancged to: ', peerConnection.current?.connectionState)
     if (peerConnection.current?.connectionState === 'connected') {
       socket?.close()
       if (refNavigate) refNavigate.current!('/connect')
@@ -172,15 +202,22 @@ const ConnectionProvider = ({ children }: Props) => {
 
   if (!peerConnection.current) {
     peerConnection.current = new RTCPeerConnection({
-      iceServers: [
-        // {
-        //   urls: 'stun:stun.services.mozilla.com',
-        //   username: 'louis@mozilla.com',
-        //   credential: 'webrtcdemo',
-        // },
-        { urls: 'stun:stun.l.google.com:19302' },
-      ],
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
     })
+    if (peerConnection.current.onicecandidate === null)
+      peerConnection.current.onicecandidate = event => {
+        const empty = candidate.current === undefined
+        candidate.current = event.candidate?.candidate
+        if (!empty) {
+          const toBeSent = JSON.stringify({
+            candidateFor: sendTo.current,
+            candidate: toBase64(event.candidate?.candidate || ''),
+          })
+          candidate.current = toBeSent
+        }
+        if (!empty) peerConnection.current!.onicecandidate = null
+      }
+
     if (peerConnection.current.onconnectionstatechange === null)
       peerConnection.current.onconnectionstatechange = () => stateChange()
     // peerConnection.current.removeEventListener('connectionstatechange', stateChange)
@@ -226,7 +263,6 @@ const ConnectionProvider = ({ children }: Props) => {
     // )
     //   return
     setupChannelAsAHost()
-
     try {
       await peerConnection.current?.setLocalDescription(
         description as RTCLocalSessionDescriptionInit

@@ -1,4 +1,5 @@
 import { ConnectionContext } from '../contexts/ConnectionContext'
+import { MessagesContext } from '../contexts/MessagesContext'
 import { useContext, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -7,6 +8,8 @@ const Homepage = () => {
   const { chooseNickName, createOffer, refNavigate, peers } = useContext(ConnectionContext)
   const nameRef = useRef<HTMLInputElement>(null)
   const myRef = useRef<string>()
+
+  const { messages } = useContext(MessagesContext)
 
   useEffect(() => {
     refNavigate!.current = navigate
@@ -38,6 +41,11 @@ const Homepage = () => {
             {peer}
           </div>
         ))}
+      <div>
+        {messages.map((message, index) => (
+          <p key={index}>{message}</p>
+        ))}
+      </div>
     </div>
   )
 }
