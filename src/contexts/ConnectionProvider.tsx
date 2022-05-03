@@ -9,42 +9,39 @@ type Props = {
 }
 
 const ConnectionProvider = ({ children }: Props) => {
+  const ice = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
   const CHANNEL_LABEL = 'chat'
   const channelInstance = useRef<RTCDataChannel>()
   const peerConnection = useRef<RTCPeerConnection>()
-  const [socket, setSocket] = useState<WebSocket>()
+  const socketRef = useRef<WebSocket>()
   const nameRef = useRef<string>('')
-  const sendTo = useRef<string>('')
+  const sendToRef = useRef<string>('')
+  const navigateRef = useRef<NavigateFunction>()
+  const candidateRef = useRef<string>()
   const [peers, setPeers] = useState<string[]>([])
-  const refNavigate = useRef<NavigateFunction>()
-  const candidate = useRef<string>()
 
   const { addMessage } = useContext(MessagesContext)
 
   const chooseNickName = (name: string) => {
     if (peers && peers.includes(name)) return undefined
-    socket?.send(JSON.stringify({ name: name }))
+    socketRef.current?.send(JSON.stringify({ do: 'nick', name: name }))
     nameRef.current = name
     return name
   }
 
   useEffect(() => {
-    if (!socket) {
+    if (!socketRef.current) {
       try {
-        // const sock = new WebSocket(`ws://chess-login.danek-family.cz:80/websockets`)
-        const sock = new WebSocket(`wss://chess-login.danek-family.cz:443/websockets`)
-        // const sock = new WebSocket(`ws://chess-login.danek-family.cz:9000/websockets`)
-        // const sock = new WebSocket(`ws://localhost:9000/websockets`)
-        sock.addEventListener('open', event => {
-          sock.send(JSON.stringify({ peers: 'All' }))
-          sock.send(JSON.stringify({ check: 'wss' }))
+        socketRef.current = new WebSocket(`wss://chess-login.danek-family.cz:443/websockets`)
+        socketRef.current.addEventListener('open', event => {
+          socketRef.current?.send(JSON.stringify({ do: 'peers' }))
+          socketRef.current?.send(JSON.stringify({ do: 'check' }))
         })
-        setSocket(sock)
       } catch (Error) {
         console.error('WebSocket not available')
       }
     }
-  }, [socket])
+  }, [socketRef])
 
   const shareSendMove = (message: string) => {
     if (channelInstance && channelInstance.current?.readyState === 'open') {
@@ -59,39 +56,35 @@ const ConnectionProvider = ({ children }: Props) => {
   }, [])
 
   const sendDataToWithTimeout = useCallback(() => {
-    if (peerConnection.current?.connectionState !== 'connected') {
+    if (peerConnection.current?.iceConnectionState !== 'connected') {
       setTimeout(() => {
-        if (candidate.current) {
-          socket?.send(candidate.current)
-        }
         const rm = JSON.stringify(peerConnection.current?.localDescription?.toJSON())
-        socket?.send(
+        socketRef.current?.send(
           JSON.stringify({
-            sendTo: sendTo.current,
+            do: 'sendTo',
+            sendTo: sendToRef.current,
             sentBy: nameRef.current,
             recievedRemoteDescr: toBase64(rm),
           })
         )
-
-        // socket?.send(JSON.stringify({ connected: nameRef.current }))
       }, 100)
     }
-  }, [socket])
+  }, [socketRef])
 
   const sendDataNoTimeout = useCallback(() => {
     if (peerConnection.current?.connectionState !== 'connected') {
       const rm = JSON.stringify(peerConnection.current?.localDescription?.toJSON())
       if (!rm) return
-      socket?.send(
+      socketRef.current?.send(
         JSON.stringify({
-          sendTo: sendTo.current,
+          do: 'sendTo',
+          sendTo: sendToRef.current,
           sentBy: nameRef.current,
           recievedRemoteDescr: toBase64(rm),
         })
       )
-      // socket?.send(JSON.stringify({ connected: nameRef.current }))
     }
-  }, [socket])
+  }, [socketRef])
 
   const createAnswer = useCallback(
     async (remoteDescription: string) => {
@@ -106,7 +99,7 @@ const ConnectionProvider = ({ children }: Props) => {
         }
         if (
           !peerConnection.current ||
-          peerConnection.current.connectionState !== 'new' ||
+          peerConnection.current.iceConnectionState !== 'new' ||
           !['have-remote-offer', 'have-local-pranswer'].includes(
             peerConnection.current?.signalingState
           )
@@ -117,166 +110,133 @@ const ConnectionProvider = ({ children }: Props) => {
         await peerConnection.current!.setLocalDescription(
           description as RTCLocalSessionDescriptionInit
         )
-        if (candidate.current) {
-          socket?.send(candidate.current)
-        }
       } catch (Error) {
-        console.info('create answer error')
+        console.error('create answer error')
       }
     },
-    [socket]
+    [
+      /*socketRef*/
+    ]
   )
 
-  const connect = useCallback(() => {
-    if (peerConnection.current?.ondatachannel === null) setupChannelAsASlave()
-    if (peerConnection.current?.onsignalingstatechange !== null) return
-    peerConnection.current.onsignalingstatechange = () => {
-      sendDataNoTimeout()
-    }
-  }, [sendDataNoTimeout, setupChannelAsASlave])
+  const connect = useCallback(
+    async (description: string) => {
+      await peerConnection.current?.setRemoteDescription(
+        new RTCSessionDescription(JSON.parse(description))
+      )
+      if (peerConnection.current?.ondatachannel === null) setupChannelAsASlave()
+      if (peerConnection.current?.onsignalingstatechange !== null) return
+      peerConnection.current.onsignalingstatechange = () => {
+        sendDataNoTimeout()
+      }
+    },
+    [sendDataNoTimeout, setupChannelAsASlave]
+  )
 
   // Listen for messages
   useEffect(() => {
-    if (!socket) return
-    if (socket.onmessage === null) {
-      socket.onmessage = event => {
-        if (event.data.charAt(0) === '[') {
-          setPeers(JSON.parse(event.data)['name'])
-          const name = JSON.parse(event.data)
-          const added: string[] = []
-          name.forEach(
-            (item: { name?: string; offeredBy?: string; recievedRemoteDescr?: string }) => {
-              if (item.name) added.push(item.name)
-            }
-          )
-          if (added && added.length > 0) setPeers(added)
-          if (peers && peers.length > 0) setPeers([...peers, ...added])
-          else setPeers(added)
-        } else {
-          const value: Record<string, string> = JSON.parse(event.data)
-          if (
-            candidate.current &&
-            socket &&
-            peerConnection.current?.connectionState !== 'connected'
-          ) {
-            socket?.send(candidate.current)
-          }
-          try {
-            if (Object.keys(value).includes('candidate')) {
-              const parsed = fromBase64(value['candidate'])
-              const candidateInitDict: RTCIceCandidateInit = {
-                candidate: parsed,
-                sdpMLineIndex: 0,
-                // sdpMid: '',
-                // usernameFragment: '',
-              }
-              const candidate = new RTCIceCandidate(candidateInitDict)
-              peerConnection.current?.addIceCandidate(candidate)
-            }
-          } catch (e: any) {
-            addMessage(JSON.stringify(e.message))
-          }
-          if (Object.keys(value).includes('recievedRemoteDescr')) {
-            const prd = value['recievedRemoteDescr']
-            if (Object.keys(value).includes('offeredBy')) {
-              sendTo.current = value['offeredBy']
-              if (prd) connect()
-            } else if (Object.keys(value).includes('acceptedBy')) {
-              sendTo.current = value['acceptedBy']
-              if (prd) {
-                createAnswer(fromBase64(prd))
+    if (!socketRef) return
+    if (socketRef.current?.onmessage === null) {
+      socketRef.current.onmessage = event => {
+        const value: Record<string, string> = JSON.parse(event.data)
+        const keys = Object.keys(value)
+        if (!keys.includes('do')) return
+        switch (value.do) {
+          case 'peers':
+            setPeers(JSON.parse(event.data)['names'])
+            break
+          case 'offer':
+            sendToRef.current = value.offeredBy
+            connect(fromBase64(value.recievedRemoteDescr))
+            break
+          case 'send':
+            sendToRef.current = value.acceptedBy
+            createAnswer(fromBase64(value.recievedRemoteDescr))
+            break
+          case 'answerBy':
+            if (!keys.includes('recievedRemoteDescr') || !keys.includes('acceptedBy')) return
+            sendToRef.current = value.acceptedBy
+            createAnswer(fromBase64(value.recievedRemoteDescr))
+            break
+          case 'candidate':
+            const handleCandidate = async () => {
+              try {
+                const parsed = fromBase64(value['candidate'])
+                const candidateInitDict: RTCIceCandidateInit = {
+                  candidate: parsed,
+                  sdpMLineIndex: 0,
+                  // sdpMid: '',
+                  // usernameFragment: '',
+                }
+                const candidate = new RTCIceCandidate(candidateInitDict)
+                await peerConnection.current?.addIceCandidate(candidate)
+              } catch (e: any) {
+                addMessage(e.message)
               }
             }
-          }
+            handleCandidate()
+            break
         }
       }
     }
-  }, [createAnswer, connect, socket, peers, addMessage])
+  }, [createAnswer, connect, socketRef, peers, addMessage])
 
   const stateChange = () => {
-    if (peerConnection.current?.connectionState === 'connected') {
-      socket?.close()
-      if (refNavigate) refNavigate.current!('/connect')
+    if (peerConnection.current?.iceConnectionState === 'connected') {
+      socketRef.current?.send(
+        JSON.stringify({ do: 'leave', leave: [nameRef.current, sendToRef.current] })
+      )
+      if (navigateRef) navigateRef.current!('/connect')
+    }
+  }
+
+  const iceCandidateHandler = (event: RTCPeerConnectionIceEvent) => {
+    if (event.candidate === null) return
+    if (sendToRef.current) {
+      candidateRef.current = JSON.stringify({
+        do: 'candidate',
+        candidateFor: sendToRef.current,
+        candidate: toBase64(event.candidate?.candidate || ''),
+      })
+      socketRef.current?.send(candidateRef.current)
     }
   }
 
   if (!peerConnection.current) {
-    peerConnection.current = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    })
+    peerConnection.current = new RTCPeerConnection(ice)
     if (peerConnection.current.onicecandidate === null)
-      peerConnection.current.onicecandidate = event => {
-        const empty = candidate.current === undefined
-        candidate.current = event.candidate?.candidate
-        if (!empty) {
-          const toBeSent = JSON.stringify({
-            candidateFor: sendTo.current,
-            candidate: toBase64(event.candidate?.candidate || ''),
-          })
-          candidate.current = toBeSent
-        }
-        if (!empty) peerConnection.current!.onicecandidate = null
+      peerConnection.current.onicecandidate = e => {
+        iceCandidateHandler(e)
       }
-
     if (peerConnection.current.onconnectionstatechange === null)
       peerConnection.current.onconnectionstatechange = () => stateChange()
-    // peerConnection.current.removeEventListener('connectionstatechange', stateChange)
-    // peerConnection.current.addEventListener('connectionstatechange', stateChange)
   }
 
   const setupChannelAsAHost = () => {
     try {
-      const channelIns = peerConnection.current?.createDataChannel(CHANNEL_LABEL)
-
-      channelInstance.current = channelIns
-    } catch (e) {
-      console.error('No data channel (peerConnection)', e)
+      channelInstance.current = peerConnection.current?.createDataChannel(CHANNEL_LABEL)
+    } catch (e: any) {
+      addMessage(`No data channel (peerConnection) ${e.message}`)
     }
   }
 
   if (!peerConnection.current) return <div>No connection</div>
 
   const createOffer = async (peer: string, me: string) => {
-    if (peerConnection.current?.onsignalingstatechange === null)
-      peerConnection.current.onsignalingstatechange = async () => {
-        const description = await peerConnection.current?.createOffer()
-        // if (
-        //   ['have-remote-offer', 'have-local-pranswer'].includes(
-        //     peerConnection.current?.signalingState!
-        //   )
-        // )
-        //   return
-
-        // sendDataToWithTimeout()
-        if (description === undefined) return
-        try {
-          await peerConnection.current?.setLocalDescription(
-            description as RTCLocalSessionDescriptionInit
-          )
-        } catch (e) {
-          console.info('create offer error')
-        }
-      }
-    const description = await peerConnection.current?.createOffer()
-    // if (
-    //   ['have-remote-offer', 'have-local-pranswer'].includes(peerConnection.current?.signalingState!)
-    // )
-    //   return
     setupChannelAsAHost()
+    const description = await peerConnection.current?.createOffer()
     try {
-      await peerConnection.current?.setLocalDescription(
-        description as RTCLocalSessionDescriptionInit
-      )
+      await peerConnection.current?.setLocalDescription(description)
     } catch (e) {
-      console.info('create peerConnection error')
+      console.error('create peerConnection error')
     }
-
-    sendTo.current = peer
+    sendToRef.current = peer
     const rm = toBase64(
       JSON.stringify(peerConnection.current?.localDescription?.toJSON())
     ).toString()
-    socket?.send(
+    socketRef.current?.send(
       JSON.stringify({
+        do: 'play',
         play: peer,
         with: me,
         recievedRemoteDescr: rm,
@@ -291,9 +251,10 @@ const ConnectionProvider = ({ children }: Props) => {
         chooseNickName,
         createOffer,
         shareSendMove,
-        refNavigate,
+        refNavigate: navigateRef,
         peers,
-        socket,
+        socket: socketRef.current,
+        name: nameRef.current,
         channelInstance,
       }}
     >

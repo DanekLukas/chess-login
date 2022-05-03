@@ -8,6 +8,7 @@ type State = {
   refNavigate: React.MutableRefObject<NavigateFunction | undefined> | undefined
   peers: string[]
   socket: WebSocket | undefined
+  name: string | undefined
   channelInstance: React.MutableRefObject<RTCDataChannel | undefined> | undefined
 }
 
@@ -18,5 +19,6 @@ export const ConnectionContext = createContext<State>({
   refNavigate: undefined,
   peers: [],
   socket: undefined,
+  name: undefined,
   channelInstance: undefined,
 })

@@ -1,13 +1,17 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-// import Board from '../components/Board'
+import { ConnectionContext } from '../contexts/ConnectionContext'
+import { useContext } from 'react'
 import Connect from './Connect'
 import Homepage from './Homepage'
+
 const AppRouter = () => {
+  const { name } = useContext(ConnectionContext)
+
   return (
     <>
       <BrowserRouter>
         <Routes>
-          <Route path='/connect' element={<Connect />} />
+          {name !== '' && <Route path='/connect' element={<Connect />} />}
           <Route path='/' element={<Homepage />} />
           <Route path='*' element={<Navigate to='/' />} />
         </Routes>
